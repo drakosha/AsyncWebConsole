@@ -27,7 +27,7 @@
 
 ```ini
 lib_deps =
-  drakosha/AsyncWebConsole@^0.2.0
+  drakosha/AsyncWebConsole@^0.2.1
 ```
 
 ## Быстрый старт

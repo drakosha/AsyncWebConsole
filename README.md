@@ -27,7 +27,7 @@ Async WebSocket console for ESP32 built on top of `ESPAsyncWebServer`. It safely
 
 ```ini
 lib_deps =
-  drakosha/AsyncWebConsole@^0.2.0
+  drakosha/AsyncWebConsole@^0.2.1
 ```
 
 ## Quick Start
