@@ -1,5 +1,8 @@
 # AsyncWebConsole Changelog
 
+## 0.2.2
+- Fix: update quick start and example usage
+
 ## 0.2.1
 - Fixed installation issue by including the `web/` assets in exported package.
 - Bumped documentation and examples to reference v0.2.1.

@@ -1,6 +1,6 @@
 {
   "name": "AsyncWebConsole",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Async WebSocket console for ESP32 (Arduino) with esp_log bridge, ring buffer, batching and web UI controls.",
   "keywords": ["esp32", "websocket", "console", "logging", "freertos", "esp-idf"],
   "repository": {
