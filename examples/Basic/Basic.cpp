@@ -66,4 +66,7 @@ void setup(){
 }
 
 void loop(){
+  static uint32_t counter = 0;
+  delay(5000);
+  console.printf("[loop] periodic message #%lu\n", static_cast<unsigned long>(++counter));
 }
