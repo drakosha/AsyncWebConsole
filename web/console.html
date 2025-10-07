@@ -1,0 +1,422 @@
+R"HTML(
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ESP32 Web Console</title>
+  <style>
+    :root { font-family: ui-monospace, Menlo, Consolas, monospace; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: #0b0f14;
+      color: #e6edf3;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 12px 16px;
+      background: #111723;
+      border-bottom: 1px solid #1f2937;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .status {
+      margin-right: 10px;
+      font-weight: 700;
+    }
+    .status.ok { color: #22c55e; }
+    .status.err { color: #ef4444; }
+    .status.paused { color: #f59e0b; }
+    .header-main {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    #log {
+      flex: 1;
+      min-height: 0;
+      padding: 12px 16px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .line { margin: 0 0 .25rem 0; }
+    .sys { color: #9ecbff; }
+    .err { color: #ff8a8a; }
+    .ok  { color: #9bffa8; }
+    .ts  { color: #8ab4f8; opacity: .9; }
+    .bold { font-weight: 600; }
+    .dim { opacity: .75; }
+    .italic { font-style: italic; }
+    .underline { text-decoration: underline; }
+    .fg-black { color: #1a1f2b; }
+    .fg-red { color: #ff8a8a; }
+    .fg-green { color: #9bffa8; }
+    .fg-yellow { color: #f5d67b; }
+    .fg-blue { color: #9ecbff; }
+    .fg-magenta { color: #e1a6ff; }
+    .fg-cyan { color: #7be3f4; }
+    .fg-white { color: #e6edf3; }
+    .fg-bright-black { color: #4b5563; }
+    .fg-bright-red { color: #ff9b9b; }
+    .fg-bright-green { color: #b2ffbd; }
+    .fg-bright-yellow { color: #ffe08a; }
+    .fg-bright-blue { color: #b6d7ff; }
+    .fg-bright-magenta { color: #f1b8ff; }
+    .fg-bright-cyan { color: #9be9ff; }
+    .fg-bright-white { color: #ffffff; }
+    .bg-black { background: #111723; }
+    .bg-red { background: #3b0a0a; }
+    .bg-green { background: #0a3b1a; }
+    .bg-yellow { background: #3b2f0a; }
+    .bg-blue { background: #0a1f3b; }
+    .bg-magenta { background: #2a0a3b; }
+    .bg-cyan { background: #0a2f3b; }
+    .bg-white { background: #9fa6b2; }
+    .bg-bright-black { background: #374151; }
+    .bg-bright-red { background: #5a1f1f; }
+    .bg-bright-green { background: #1f5a2b; }
+    .bg-bright-yellow { background: #5a4b1f; }
+    .bg-bright-blue { background: #1f3b5a; }
+    .bg-bright-magenta { background: #3b1f5a; }
+    .bg-bright-cyan { background: #1f4b5a; }
+    .bg-bright-white { background: #cbd5e1; color: #0b0f14; }
+    form {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      border-top: 1px solid #1f2937;
+      background: #0e1420;
+      position: sticky;
+      bottom: 0;
+    }
+    input[type=text] {
+      flex: 1;
+      padding: 10px 12px;
+      background: #0b1220;
+      color: #e6edf3;
+      border: 1px solid #1f2937;
+      border-radius: 10px;
+    }
+    button {
+      padding: 10px 14px;
+      border: 0;
+      border-radius: 10px;
+      background: #2563eb;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .header-actions button {
+      padding: 8px 12px;
+    }
+    .keep-label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 0.9rem;
+      color: #d1d5db;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-main">
+      <span id="status" class="status err">[connecting]</span>
+      <b>ESP32 Web Console</b>
+    </div>
+    <div class="header-actions">
+      <button id="clear-btn" type="button" disabled>Clear</button>
+      <button id="toggle-btn" type="button" disabled>Pause</button>
+      <label class="keep-label"><input id="keep-paused" type="checkbox"> Keep while paused</label>
+    </div>
+  </header>
+  <div id="log" role="log" aria-live="polite"></div>
+  <form id="f" autocomplete="off">
+    <input id="cmd" type="text" placeholder="help">
+    <button id="btn" type="submit">Send</button>
+  </form>
+  <script>
+    const logEl = document.getElementById('log');
+    const statusEl = document.getElementById('status');
+    const formEl = document.getElementById('f');
+    const inputEl = document.getElementById('cmd');
+    const buttonEl = document.getElementById('btn');
+    const clearBtn = document.getElementById('clear-btn');
+    const toggleBtn = document.getElementById('toggle-btn');
+    const keepCheckbox = document.getElementById('keep-paused');
+    const history = [];
+    let histIndex = -1;
+    let carry = '';
+    let receiving = true;
+    let isConnected = false;
+    let droppedWhilePaused = 0;
+    const pausedBuffer = [];
+
+    function applyAnsi(container, text) {
+      const colors = ['black','red','green','yellow','blue','magenta','cyan','white'];
+      let i = 0;
+      let chunk = '';
+      const state = { bold:false, dim:false, italic:false, underline:false, fg:null, bg:null, brightFg:false, brightBg:false };
+      const flush = () => {
+        if (!chunk.length) return;
+        const span = document.createElement('span');
+        const cls = [];
+        if (state.bold) cls.push('bold');
+        if (state.dim) cls.push('dim');
+        if (state.italic) cls.push('italic');
+        if (state.underline) cls.push('underline');
+        if (state.fg) cls.push('fg' + (state.brightFg ? '-bright' : '') + '-' + state.fg);
+        if (state.bg) cls.push('bg' + (state.brightBg ? '-bright' : '') + '-' + state.bg);
+        if (cls.length) span.className = cls.join(' ');
+        span.appendChild(document.createTextNode(chunk));
+        container.appendChild(span);
+        chunk = '';
+      };
+
+      while (i < text.length) {
+        if (text[i] === '\x1b' && text[i + 1] === '[') {
+          flush();
+          i += 2;
+          let code = '';
+          while (i < text.length && text[i] !== 'm') {
+            code += text[i++];
+          }
+          if (i < text.length && text[i] === 'm') i++;
+          const parts = code.split(';').filter(Boolean);
+          if (!parts.length) {
+            state.bold = state.dim = state.italic = state.underline = false;
+            state.fg = state.bg = null;
+            state.brightFg = state.brightBg = false;
+            continue;
+          }
+          for (const part of parts) {
+            const n = parseInt(part, 10);
+            if (n === 0) {
+              state.bold = state.dim = state.italic = state.underline = false;
+              state.fg = state.bg = null;
+              state.brightFg = state.brightBg = false;
+            } else if (n === 1) state.bold = true;
+            else if (n === 2) state.dim = true;
+            else if (n === 3) state.italic = true;
+            else if (n === 4) state.underline = true;
+            else if (n === 22) { state.bold = false; state.dim = false; }
+            else if (n === 23) state.italic = false;
+            else if (n === 24) state.underline = false;
+            else if (n === 39) { state.fg = null; state.brightFg = false; }
+            else if (n === 49) { state.bg = null; state.brightBg = false; }
+            else if (n >= 30 && n <= 37) { state.fg = colors[n - 30]; state.brightFg = false; }
+            else if (n >= 90 && n <= 97) { state.fg = colors[n - 90]; state.brightFg = true; }
+            else if (n >= 40 && n <= 47) { state.bg = colors[n - 40]; state.brightBg = false; }
+            else if (n >= 100 && n <= 107) { state.bg = colors[n - 100]; state.brightBg = true; }
+          }
+        } else {
+          chunk += text[i++];
+        }
+      }
+      flush();
+    }
+
+    function pushLine(text, cls) {
+      const div = document.createElement('div');
+      div.className = 'line ' + (cls || '');
+      const trimmed = text.replace(/\r?\n$/, '');
+      const match = trimmed.match(/^\[(\d{2}:\d{2}:\d{2}\.\d{3})\]\s?([\s\S]*)/);
+      if (match) {
+        const ts = document.createElement('span');
+        ts.className = 'ts';
+        ts.textContent = '[' + match[1] + '] ';
+        div.appendChild(ts);
+        applyAnsi(div, match[2]);
+      } else {
+        applyAnsi(div, trimmed);
+      }
+      logEl.appendChild(div);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function refreshStatus() {
+      if (isConnected) {
+        statusEl.classList.remove('err');
+        statusEl.classList.toggle('ok', receiving);
+        statusEl.classList.toggle('paused', !receiving);
+        if (receiving) {
+          statusEl.textContent = '[connected | receiving]';
+        } else {
+          const label = keepCheckbox.checked ? 'buffered' : 'skipped';
+          statusEl.textContent = `[connected | paused (${droppedWhilePaused} ${label})]`;
+        }
+      } else {
+        statusEl.classList.remove('ok', 'paused');
+        statusEl.classList.add('err');
+        statusEl.textContent = '[disconnected]';
+      }
+    }
+
+    function refreshControls() {
+      clearBtn.disabled = false;
+      toggleBtn.disabled = !isConnected;
+      toggleBtn.textContent = receiving ? 'Pause' : 'Resume';
+    }
+
+    clearBtn.addEventListener('click', () => {
+      logEl.innerHTML = '';
+      carry = '';
+      pausedBuffer.length = 0;
+      droppedWhilePaused = 0;
+      refreshStatus();
+    });
+
+    toggleBtn.addEventListener('click', () => {
+      const newReceiving = !receiving;
+      if (newReceiving && !receiving) {
+        if (keepCheckbox.checked && pausedBuffer.length) {
+          pushLine(`[AsyncWebConsole] replaying ${pausedBuffer.length} buffered messages`, 'sys');
+          pausedBuffer.forEach(line => pushLine(line));
+          pausedBuffer.length = 0;
+          droppedWhilePaused = 0;
+        } else if (droppedWhilePaused > 0) {
+          pushLine(`[AsyncWebConsole] skipped ${droppedWhilePaused} messages while paused`, 'sys');
+          droppedWhilePaused = 0;
+        }
+      }
+      receiving = newReceiving;
+      if (!receiving) {
+        carry = '';
+        if (!keepCheckbox.checked) {
+          pausedBuffer.length = 0;
+          droppedWhilePaused = 0;
+        } else {
+          droppedWhilePaused = pausedBuffer.length;
+        }
+      }
+      refreshStatus();
+      refreshControls();
+    });
+
+    keepCheckbox.addEventListener('change', () => {
+      if (!receiving) {
+        if (!keepCheckbox.checked) {
+          droppedWhilePaused += pausedBuffer.length;
+          pausedBuffer.length = 0;
+        } else {
+          droppedWhilePaused = pausedBuffer.length;
+        }
+        refreshStatus();
+      }
+    });
+
+    refreshStatus();
+    refreshControls();
+
+    (function connect() {
+      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+      ws.onopen = () => {
+        isConnected = true;
+        receiving = true;
+        carry = '';
+        pausedBuffer.length = 0;
+        droppedWhilePaused = 0;
+        buttonEl.disabled = false;
+        refreshStatus();
+        refreshControls();
+        pushLine('[connected]', 'sys');
+      };
+      ws.onmessage = (e) => {
+        const text = carry + String(e.data);
+        const parts = text.split(/\n/);
+        carry = parts.pop() || '';
+        if (!receiving) {
+          if (keepCheckbox.checked) {
+            for (const part of parts) {
+              if (part.length) pausedBuffer.push(part);
+            }
+            droppedWhilePaused = pausedBuffer.length;
+          } else {
+            for (const part of parts) {
+              if (part.length) droppedWhilePaused++;
+            }
+          }
+          carry = '';
+          refreshStatus();
+          return;
+        }
+        if (pausedBuffer.length && keepCheckbox.checked) {
+          pushLine(`[AsyncWebConsole] replaying ${pausedBuffer.length} buffered messages`, 'sys');
+          pausedBuffer.forEach(line => pushLine(line));
+          pausedBuffer.length = 0;
+          droppedWhilePaused = 0;
+        }
+        for (const part of parts) {
+          if (part.length) pushLine(part);
+        }
+      };
+      ws.onclose = () => {
+        isConnected = false;
+        receiving = false;
+        carry = '';
+        pausedBuffer.length = 0;
+        droppedWhilePaused = 0;
+        buttonEl.disabled = true;
+        refreshStatus();
+        refreshControls();
+        pushLine('[disconnected]', 'err');
+        setTimeout(connect, 1500);
+      };
+      ws.onerror = () => {
+        isConnected = false;
+        receiving = false;
+        carry = '';
+        pausedBuffer.length = 0;
+        droppedWhilePaused = 0;
+        refreshStatus();
+        refreshControls();
+        pushLine('[ws error]', 'err');
+      };
+      formEl.onsubmit = (event) => {
+        event.preventDefault();
+        const command = inputEl.value.trim();
+        if (!command.length) return;
+        ws.send(command);
+        history.unshift(command);
+        histIndex = -1;
+        inputEl.value = '';
+        inputEl.focus();
+      };
+      inputEl.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (history.length && histIndex + 1 < history.length) {
+            histIndex++;
+            inputEl.value = history[histIndex];
+            setTimeout(() => inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length), 0);
+          }
+        } else if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          if (histIndex > 0) {
+            histIndex--;
+            inputEl.value = history[histIndex];
+          } else {
+            histIndex = -1;
+            inputEl.value = '';
+          }
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
+)HTML"
