@@ -63,7 +63,7 @@ void setup(){
   console.attachTo(server, "/console");
   server.begin();
 
-  console.println("== AsyncWebConsole готов ==");
+  console.print("== AsyncWebConsole готов ==\n");
 }
 
 void loop(){ }
@@ -75,7 +75,7 @@ void loop(){ }
 - `void attachTo(AsyncWebServer& server, const char* routePath = "/")` — раздаёт HTML и регистрирует WS‑хендлер.
 - `void onCommand(CmdHandler h)` — обработчик одной строкой (`std::function<String(const String&)>`).
 - `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — реестр команд c аргументами.
-- Логирование: `log(const String&)`, `println(const String&)`, `printf(const char* fmt, ...)`.
+- Логирование: `log(const String&)`, `print(const String&)`, `printf(const char* fmt, ...)`.
 - `void sendBacklog(AsyncWebSocketClient* client)` — отправка бэколога новому клиенту (автоматически при подключении).
 - Временные метки/обрезка: `setTimestamps(bool)`, `setMaxLineLen(size_t)`.
 
@@ -93,20 +93,23 @@ void loop(){ }
 
 ### Конфигурация
 ```cpp
-AsyncWebConsole::Config cfg;
-cfg.queueLen       = 8;            // длина очереди сообщений (с учётом maxLineLen)
-cfg.taskStack      = 4096;         // стек фоновой задачи (байт)
-cfg.taskPrio       = 3;            // приоритет фоновой задачи
-cfg.mirrorOut      = &Serial;      // зеркалирование в Serial (nullptr = выкл.)
-cfg.timestamps     = true;         // префикс времени [HH:MM:SS.mmm]
-cfg.maxLineLen     = 512;          // 0 = без ограничений, иначе обрезка
-cfg.fileLogEnable  = false;        // файловый лог выключен по умолчанию
-cfg.filePath       = "/console.log";
-cfg.maxFileSize    = 32 * 1024;    // ротация при превышении
-cfg.maxFiles       = 3;            // .1 .. .N
-cfg.syslogMaxLevel = ESP_LOG_VERBOSE; // максимум для попадания в консоль
-cfg.wsBatchMaxBytes   = 1024;      // размер агрегируемого WS-пакета
-cfg.wsFlushIntervalMs = 100;       // flush каждые 100 мс
+const AsyncWebConsole::Config cfg = []{
+  AsyncWebConsole::Config c;
+  c.queueLen       = 8;            // длина очереди сообщений (с учётом maxLineLen)
+  c.taskStack      = 4096;         // стек фоновой задачи (байт)
+  c.taskPrio       = 3;            // приоритет фоновой задачи
+  c.mirrorOut      = &Serial;      // зеркалирование в Serial (nullptr = выкл.)
+  c.timestamps     = true;         // префикс времени [HH:MM:SS.mmm]
+  c.maxLineLen     = 512;          // 0 = без ограничений, иначе обрезка
+  c.fileLogEnable  = false;        // файловый лог выключен по умолчанию
+  c.filePath       = "/console.log";
+  c.maxFileSize    = 32 * 1024;    // ротация при превышении
+  c.maxFiles       = 3;            // .1 .. .N
+  c.syslogMaxLevel = ESP_LOG_VERBOSE; // максимум для попадания в консоль
+  c.wsBatchMaxBytes   = 1024;      // размер агрегируемого WS-пакета
+  c.wsFlushIntervalMs = 100;       // flush каждые 100 мс
+  return c;
+}();
 
 AsyncWebConsole console("/ws", 16*1024, cfg);
 ```

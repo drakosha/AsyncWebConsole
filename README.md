@@ -63,7 +63,7 @@ void setup(){
   console.attachTo(server, "/console");
   server.begin();
 
-  console.println("== AsyncWebConsole ready ==");
+  console.print("== AsyncWebConsole ready ==\n");
 }
 
 void loop(){ }
@@ -75,7 +75,7 @@ void loop(){ }
 - `void attachTo(AsyncWebServer& server, const char* routePath = "/")` — serves HTML and registers WS handler.
 - `void onCommand(CmdHandler h)` — single‑string handler (`std::function<String(const String&)>`).
 - `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — argv‑based command registry.
-- Logging: `log(const String&)`, `println(const String&)`, `printf(const char* fmt, ...)`.
+- Logging: `log(const String&)`, `print(const String&)`, `printf(const char* fmt, ...)`.
 - `void sendBacklog(AsyncWebSocketClient* client)` — sends backlog to a new client (called on connect).
 - Timestamps/clipping: `setTimestamps(bool)`, `setMaxLineLen(size_t)`.
 
@@ -93,20 +93,23 @@ void loop(){ }
 
 ### Configuration
 ```cpp
-AsyncWebConsole::Config cfg;
-cfg.queueLen       = 8;            // queue depth; keep modest if maxLineLen is large
-cfg.taskStack      = 4096;         // drain task stack size (bytes)
-cfg.taskPrio       = 3;            // drain task priority
-cfg.mirrorOut      = &Serial;      // mirror to Serial (nullptr to disable)
-cfg.timestamps     = true;         // [HH:MM:SS.mmm] prefix
-cfg.maxLineLen     = 512;          // 0 = unlimited; otherwise clip
-cfg.fileLogEnable  = false;        // file logging off by default
-cfg.filePath       = "/console.log";
-cfg.maxFileSize    = 32 * 1024;    // rotate when exceeded
-cfg.maxFiles       = 3;            // .1 .. .N
-cfg.syslogMaxLevel = ESP_LOG_VERBOSE; // console allows up to this level
-cfg.wsBatchMaxBytes   = 1024;      // aggregate WS payload to reduce queue pressure
-cfg.wsFlushIntervalMs = 100;       // flush aggregated logs at least every 100 ms
+const AsyncWebConsole::Config cfg = []{
+  AsyncWebConsole::Config c;
+  c.queueLen       = 8;            // queue depth; keep modest if maxLineLen is large
+  c.taskStack      = 4096;         // drain task stack size (bytes)
+  c.taskPrio       = 3;            // drain task priority
+  c.mirrorOut      = &Serial;      // mirror to Serial (nullptr to disable)
+  c.timestamps     = true;         // [HH:MM:SS.mmm] prefix
+  c.maxLineLen     = 512;          // 0 = unlimited; otherwise clip
+  c.fileLogEnable  = false;        // file logging off by default
+  c.filePath       = "/console.log";
+  c.maxFileSize    = 32 * 1024;    // rotate when exceeded
+  c.maxFiles       = 3;            // .1 .. .N
+  c.syslogMaxLevel = ESP_LOG_VERBOSE; // console allows up to this level
+  c.wsBatchMaxBytes   = 1024;      // aggregate WS payload to reduce queue pressure
+  c.wsFlushIntervalMs = 100;       // flush aggregated logs at least every 100 ms
+  return c;
+}();
 
 AsyncWebConsole console("/ws", 16*1024, cfg);
 ```

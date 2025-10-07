@@ -5,9 +5,12 @@
 AsyncWebServer server(80);
 
 // Customise console behaviour (optional)
-AsyncWebConsole::Config consoleCfg;
-consoleCfg.wsBatchMaxBytes   = 1024;  // aggregate logs before flushing to the socket
-consoleCfg.wsFlushIntervalMs = 100;   // flush at least every 100 ms
+const AsyncWebConsole::Config consoleCfg = []{
+  AsyncWebConsole::Config cfg;
+  cfg.wsBatchMaxBytes   = 1024;  // aggregate logs before flushing to the socket
+  cfg.wsFlushIntervalMs = 100;   // flush at least every 100 ms
+  return cfg;
+}();
 
 AsyncWebConsole console("/ws", 16 * 1024, consoleCfg);
 
@@ -59,7 +62,7 @@ void setup(){
 
   server.begin();
 
-  console.println("== AsyncWebConsole example ==");
+  console.print("== AsyncWebConsole example ==\n");
 }
 
 void loop(){
