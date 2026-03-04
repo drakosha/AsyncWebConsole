@@ -1,6 +1,6 @@
 R"HTML(
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -159,12 +159,14 @@ R"HTML(
     const toggleBtn = document.getElementById('toggle-btn');
     const keepCheckbox = document.getElementById('keep-paused');
     const history = [];
+    const MAX_DOM_LINES = 5000;
     let histIndex = -1;
     let carry = '';
     let receiving = true;
     let isConnected = false;
     let droppedWhilePaused = 0;
     const pausedBuffer = [];
+    let ws = null;
 
     function applyAnsi(container, text) {
       const colors = ['black','red','green','yellow','blue','magenta','cyan','white'];
@@ -245,6 +247,9 @@ R"HTML(
         applyAnsi(div, trimmed);
       }
       logEl.appendChild(div);
+      while (logEl.childElementCount > MAX_DOM_LINES) {
+        logEl.removeChild(logEl.firstElementChild);
+      }
       logEl.scrollTop = logEl.scrollHeight;
     }
 
@@ -319,11 +324,43 @@ R"HTML(
       }
     });
 
+    formEl.onsubmit = (event) => {
+      event.preventDefault();
+      const command = inputEl.value.trim();
+      if (!command.length || !ws || ws.readyState !== WebSocket.OPEN) return;
+      ws.send(command);
+      history.unshift(command);
+      histIndex = -1;
+      inputEl.value = '';
+      inputEl.focus();
+    };
+
+    inputEl.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (history.length && histIndex + 1 < history.length) {
+          histIndex++;
+          inputEl.value = history[histIndex];
+          setTimeout(() => inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length), 0);
+        }
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (histIndex > 0) {
+          histIndex--;
+          inputEl.value = history[histIndex];
+        } else {
+          histIndex = -1;
+          inputEl.value = '';
+        }
+      }
+    });
+
     refreshStatus();
     refreshControls();
 
     (function connect() {
-      const ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws');
+      const wsPath = (window.__AWC_WS_PATH) || '/ws';
+      ws = new WebSocket((location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + wsPath);
       ws.onopen = () => {
         isConnected = true;
         receiving = true;
@@ -386,35 +423,6 @@ R"HTML(
         refreshControls();
         pushLine('[ws error]', 'err');
       };
-      formEl.onsubmit = (event) => {
-        event.preventDefault();
-        const command = inputEl.value.trim();
-        if (!command.length) return;
-        ws.send(command);
-        history.unshift(command);
-        histIndex = -1;
-        inputEl.value = '';
-        inputEl.focus();
-      };
-      inputEl.addEventListener('keydown', (event) => {
-        if (event.key === 'ArrowUp') {
-          event.preventDefault();
-          if (history.length && histIndex + 1 < history.length) {
-            histIndex++;
-            inputEl.value = history[histIndex];
-            setTimeout(() => inputEl.setSelectionRange(inputEl.value.length, inputEl.value.length), 0);
-          }
-        } else if (event.key === 'ArrowDown') {
-          event.preventDefault();
-          if (histIndex > 0) {
-            histIndex--;
-            inputEl.value = history[histIndex];
-          } else {
-            histIndex = -1;
-            inputEl.value = '';
-          }
-        }
-      });
     })();
   </script>
 </body>
