@@ -83,24 +83,64 @@ AsyncWebConsole::AsyncWebConsole(const char* wsPath, size_t backlogBytes, const 
 }
 
 AsyncWebConsole::~AsyncWebConsole() {
+  // Unhook bridges if this instance owns them
+  if (_sink == this) {
+    if (_origVprintf) esp_log_set_vprintf(_origVprintf);
+    _sink = nullptr;
+    _origVprintf = nullptr;
+  }
+
   _stopDrainTask();
+
+  // Drain remaining queued messages
+  if (_q) {
+    LogMsg msg;
+    while (xQueueReceive(_q, &msg, 0) == pdTRUE) {
+      free(msg.data);
+    }
+    vQueueDelete(_q);
+    _q = nullptr;
+  }
+
+  if (_mtx) {
+    vSemaphoreDelete(_mtx);
+    _mtx = nullptr;
+  }
+
+  free(_logbuf);
+  _logbuf = nullptr;
+  _bufCap = 0;
+  _used = 0;
 }
 
 void AsyncWebConsole::attachTo(AsyncWebServer& server, const char* routePath) {
   _server = &server;
   _server->on(routePath, HTTP_GET, [this](AsyncWebServerRequest* r){
-    r->send(200, String("text/html; charset=utf-8"), _indexHtml);
+    AsyncResponseStream* response = r->beginResponseStream("text/html; charset=utf-8");
+    // Inject wsPath so the HTML client connects to the correct WebSocket endpoint
+    response->printf("<script>window.__AWC_WS_PATH='%s';</script>", _wsPath);
+    // Stream PROGMEM HTML in chunks to avoid copying entire page into RAM
+    const char* p = _indexHtml;
+    size_t remaining = strlen_P(_indexHtml);
+    char buf[512];
+    while (remaining > 0) {
+      size_t n = remaining < sizeof(buf) ? remaining : sizeof(buf);
+      memcpy_P(buf, p, n);
+      response->write((const uint8_t*)buf, n);
+      p += n;
+      remaining -= n;
+    }
+    r->send(response);
   });
   _server->addHandler(&_ws);
 }
-
-void AsyncWebConsole::onCommand(CmdHandler h) { _handler = std::move(h); }
 
 void AsyncWebConsole::pushLineToBuffer(const char * s){
   if (!_logbuf || _bufCap == 0) return;
   size_t sl = strlen(s);
   if (sl >= _bufCap){
     // keep tail of the line only
+    _backlogDropped += _used + (sl - _bufCap);
     const char* src = s + (sl - _bufCap);
     memcpy(_logbuf, src, _bufCap);
     _head = 0; _used = _bufCap; return;
@@ -109,6 +149,7 @@ void AsyncWebConsole::pushLineToBuffer(const char * s){
   if (_used + sl > _bufCap){
     size_t need = (_used + sl) - _bufCap;
     if (need > _used) need = _used;
+    _backlogDropped += need;
     _head = (_head + need) % _bufCap;
     _used -= need;
   }
@@ -130,14 +171,30 @@ void AsyncWebConsole::printf(const char* fmt, ...){
 }
 
 void AsyncWebConsole::sendBacklog(AsyncWebSocketClient* c){
-  String blob;
+  if (!c) return;
+  char* blob = nullptr;
+  size_t blobLen = 0;
+
   if (_mtx) xSemaphoreTake(_mtx, portMAX_DELAY);
-  if (_logbuf && _used){
-    blob.reserve(_used);
-    for (size_t i=0;i<_used;i++) blob += _logbuf[(_head + i) % _bufCap];
+  if (_logbuf && _used) {
+    blob = (char*)malloc(_used + 1);
+    if (blob) {
+      size_t first = _bufCap - _head;
+      if (first > _used) first = _used;
+      memcpy(blob, _logbuf + _head, first);
+      if (first < _used) {
+        memcpy(blob + first, _logbuf, _used - first);
+      }
+      blobLen = _used;
+      blob[blobLen] = '\0';
+    }
   }
   if (_mtx) xSemaphoreGive(_mtx);
-  if (blob.length()) c->text(blob);
+
+  if (blob) {
+    if (blobLen) c->text(blob);
+    free(blob);
+  }
 }
 
 // Queue helpers
@@ -187,9 +244,22 @@ void AsyncWebConsole::_processLine(char* data){
     payloadLen = dataLength;
   }
 
+  size_t dropped = 0;
   if (_mtx) xSemaphoreTake(_mtx, portMAX_DELAY);
   pushLineToBuffer(payload);
+  if (_backlogDropped) {
+    dropped = _backlogDropped;
+    _backlogDropped = 0;
+  }
   if (_mtx) xSemaphoreGive(_mtx);
+
+  if (dropped) {
+    char note[80];
+    snprintf(note, sizeof(note),
+             "[AsyncWebConsole] backlog full, dropped %u bytes\n",
+             static_cast<unsigned>(dropped));
+    _queueWsBroadcast(note, strlen(note));
+  }
 
   _queueWsBroadcast(payload, payloadLen);
   if (_cfg.mirrorOut) {
@@ -361,15 +431,25 @@ void AsyncWebConsole::setConfig(const Config& cfg){
   bool wasEnabled = (_task != nullptr);
   if (wasEnabled) _stopDrainTask();
 
-  if (!wasEnabled) _flushWsBroadcast(true);
+  _flushWsBroadcast(true);
 
   _cfg = cfg;
-  // mirrorSerial is now read from _cfg directly
 
   _wsBatch = "";
   _lastWsFlushMs = millis();
 
-  if (_q) { vQueueDelete(_q); _q = nullptr; }
+  // Drain remaining messages before destroying the queue
+  if (_q) {
+    LogMsg msg;
+    while (xQueueReceive(_q, &msg, 0) == pdTRUE) {
+      if (msg.data) {
+        _processLine(msg.data);
+        free(msg.data);
+      }
+    }
+    vQueueDelete(_q);
+    _q = nullptr;
+  }
   _q = xQueueCreate(_cfg.queueLen, sizeof(LogMsg));
 
   if (wasEnabled) _startDrainTask();
@@ -451,17 +531,33 @@ void AsyncWebConsole::_startDrainTask(){
 }
 
 void AsyncWebConsole::_stopDrainTask(){
-  if (_task){
-    _flushWsBroadcast(true);
+  if (!_task) return;
+
+  _shutdownRequested = true;
+
+  // Try to send sentinel to unblock the task if waiting on empty queue.
+  // If queue is full, drain task will notice _shutdownRequested on its next iteration.
+  LogMsg sentinel{nullptr};
+  xQueueSend(_q, &sentinel, pdMS_TO_TICKS(50));
+
+  // Wait for the task to exit cooperatively (up to 2 seconds)
+  for (int i = 0; i < 200 && _task != nullptr; ++i) {
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+
+  // Fallback: force-delete if task didn't exit in time
+  if (_task) {
     TaskHandle_t t = _task;
     _task = nullptr;
     vTaskDelete(t);
   }
+
+  _shutdownRequested = false;
 }
 
 void AsyncWebConsole::_drainTask(void* arg){
   auto* self = static_cast<AsyncWebConsole*>(arg);
-  for(;;){
+  while (!self->_shutdownRequested) {
     LogMsg msg;
     TickType_t waitTicks = portMAX_DELAY;
     if (self->_cfg.wsFlushIntervalMs){
@@ -469,36 +565,46 @@ void AsyncWebConsole::_drainTask(void* arg){
       if (waitTicks == 0) waitTicks = 1;
     }
     if (xQueueReceive(self->_q, &msg, waitTicks) == pdTRUE){
-      if (msg.data){
-        size_t len = strlen(msg.data);
-        if (len && msg.data[len - 1] != '\n') {
-          char* extended = static_cast<char*>(realloc(msg.data, len + 2));
-          if (extended) {
-            extended[len] = '\n';
-            extended[len + 1] = '\0';
-            msg.data = extended;
-          }
+      if (!msg.data) continue;  // sentinel — recheck shutdown flag
+      if (self->_shutdownRequested) { free(msg.data); break; }
+      size_t len = strlen(msg.data);
+      if (len && msg.data[len - 1] != '\n') {
+        char* extended = static_cast<char*>(realloc(msg.data, len + 2));
+        if (extended) {
+          extended[len] = '\n';
+          extended[len + 1] = '\0';
+          msg.data = extended;
         }
-        self->_processLine(msg.data);
-        free(msg.data);
       }
+      self->_processLine(msg.data);
+      free(msg.data);
     } else {
       self->_flushWsBroadcast(false);
     }
   }
+  // Final flush before exit
+  self->_flushWsBroadcast(true);
+  self->_task = nullptr;
+  vTaskDelete(nullptr);
 }
 
 void AsyncWebConsole::enableEspLogBridge(){
-  if (_sink && _sink != this){ /* another instance using bridge */ }
+  if (_sink && _sink != this) {
+    Serial.println(F("[AsyncWebConsole] WARNING: esp_log bridge reassigned from another instance"));
+  }
   _sink = this;
   if (!_origVprintf) _origVprintf = esp_log_set_vprintf(&_idfVprintfShim);
   else               esp_log_set_vprintf(&_idfVprintfShim);
 }
 
 void AsyncWebConsole::disableEspLogBridge(){
-  if (_origVprintf) esp_log_set_vprintf(_origVprintf);
-  _sink = nullptr;
-  _stopDrainTask();
+  if (_sink == this) {
+    if (_origVprintf) {
+      esp_log_set_vprintf(_origVprintf);
+      _origVprintf = nullptr;
+    }
+    _sink = nullptr;
+  }
 }
 
 void AsyncWebConsole::setEspLogBridge(bool enable){
@@ -510,37 +616,43 @@ void AsyncWebConsole::setEspLogBridge(bool enable){
 
 // ets_printf bridge
 void AsyncWebConsole::_etsPutcHook(char c){
-  // Minimal critical section to guard index only; we don't lock Serial
+  // Collect characters into a static line buffer under spinlock,
+  // then copy out and do malloc/enqueue OUTSIDE the critical section.
   static char lbuf[256];
   static size_t li = 0;
-  static bool readyToSend = false;
+
+  char outbuf[258];
+  size_t outLen = 0;
+  bool doSend = false;
 
 #if defined(ARDUINO_ARCH_ESP32)
   static portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
   portENTER_CRITICAL(&mux);
 #endif
 
-if (li < sizeof(lbuf) - 1) lbuf[li++] = c; else readyToSend = true;
-  if (c == '\n') readyToSend = true;
-  if (readyToSend) {
-    char * buf = (char *) malloc(li + 2);
-    if (buf) {
-      memcpy(buf, lbuf, li);
-      buf[li] = '\0';
-      if (li && buf[li - 1] != '\n') {
-        buf[li] = '\n';
-        buf[li + 1] = '\0';
-      }
-      if (_sink && _sink->_q) _sink->_enqueueRaw(buf); else free(buf);
-    }
+  if (li < sizeof(lbuf) - 1) lbuf[li++] = c;
+  if (c == '\n' || li >= sizeof(lbuf) - 1) {
+    memcpy(outbuf, lbuf, li);
+    outLen = li;
     li = 0;
-    readyToSend = false;
+    doSend = true;
   }
 
 #if defined(ARDUINO_ARCH_ESP32)
   portEXIT_CRITICAL(&mux);
 #endif
 
+  if (doSend && outLen) {
+    // Ensure newline termination
+    if (outbuf[outLen - 1] != '\n') { outbuf[outLen++] = '\n'; }
+    outbuf[outLen] = '\0';
+
+    char* buf = (char*)malloc(outLen + 1);
+    if (buf) {
+      memcpy(buf, outbuf, outLen + 1);
+      if (_sink && _sink->_q) _sink->_enqueueRaw(buf); else free(buf);
+    }
+  }
 }
 
 void AsyncWebConsole::enableEtsPrintfBridge(){
@@ -660,26 +772,26 @@ String AsyncWebConsole::_formatTimestamp(){
   return String(buf);
 }
 
-String AsyncWebConsole::_clip(const String& s){
-  if (_cfg.maxLineLen == 0) return s;
-  if (s.length() <= _cfg.maxLineLen) return s;
-  return String(s.c_str(), _cfg.maxLineLen);
-}
-
 esp_log_level_t AsyncWebConsole::_detectEspLogLevel(const String& s){
-  // Try to detect IDF level prefix: "E (..)", "W (..)", "I (..)", "D (..)", "V (..)"
-  // Scan first few characters to skip potential leading whitespace/escape
-  for (size_t i = 0; i < s.length() && i < 8; ++i){
-    char c = s[i];
-    if (c == 'E') return ESP_LOG_ERROR;
-    if (c == 'W') return ESP_LOG_WARN;
-    if (c == 'I') return ESP_LOG_INFO;
-    if (c == 'D') return ESP_LOG_DEBUG;
-    if (c == 'V') return ESP_LOG_VERBOSE;
-    if ((c >= 'A' && c <= 'Z') || c == '[') break; // other prefixes: treat as unknown
-    if (c == '\x1b') continue; // ANSI escape start, keep scanning
+  // Detect IDF log format: optional ANSI escape + "X (" where X is E/W/I/D/V
+  size_t offset = 0;
+  // Skip optional ANSI escape prefix: \x1b[...m
+  if (s.length() > 2 && s[0] == '\x1b' && s[1] == '[') {
+    int mPos = s.indexOf('m');
+    if (mPos > 0 && mPos < 12) offset = mPos + 1;
   }
-  return ESP_LOG_NONE; // unknown -> allow by default
+  // Need at least "X (" at offset
+  if (offset + 2 >= s.length()) return ESP_LOG_NONE;
+  if (s[offset + 1] != ' ' || s[offset + 2] != '(') return ESP_LOG_NONE;
+
+  switch (s[offset]) {
+    case 'E': return ESP_LOG_ERROR;
+    case 'W': return ESP_LOG_WARN;
+    case 'I': return ESP_LOG_INFO;
+    case 'D': return ESP_LOG_DEBUG;
+    case 'V': return ESP_LOG_VERBOSE;
+    default:  return ESP_LOG_NONE;
+  }
 }
 
 bool AsyncWebConsole::_allowSyslog(const char * s) const{
@@ -730,7 +842,6 @@ String AsyncWebConsole::helpText() const {
 }
 
 String AsyncWebConsole::dispatch(const String& raw){
-  Serial.printf("Dispatching: %s\n", raw.c_str());
   String c = raw; c.trim(); if (!c.length()) return String();
   String argv[_maxArgs];
   int argc = _tokenize(c, argv, _maxArgs);

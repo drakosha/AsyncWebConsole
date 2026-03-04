@@ -10,7 +10,6 @@
 
 class AsyncWebConsole {
 public:
-  using CmdHandler = std::function<String(const String&)>;
   using CmdArgHandler = std::function<String(int, const String*)>;
 
   struct Config {
@@ -40,7 +39,6 @@ public:
   AsyncWebConsole(const char* wsPath, size_t backlogBytes, const Config& cfg);
   virtual ~AsyncWebConsole();
   void attachTo(AsyncWebServer& server, const char* routePath = "/");
-  void onCommand(CmdHandler h);
 
   // Log API (thread-safe)
   // Enqueue a line for processing by the drain task
@@ -100,7 +98,6 @@ private:
   AsyncWebServer*   _server = nullptr;
   AsyncWebSocket    _ws;
   const char*       _wsPath;
-  CmdHandler        _handler = nullptr;
 
   static const char _defaultIndexHtml[];
   const char*       _indexHtml = _defaultIndexHtml;
@@ -126,6 +123,7 @@ private:
   
   QueueHandle_t     _q = nullptr;
   TaskHandle_t      _task = nullptr;
+  volatile bool     _shutdownRequested = false;
 
   // synchronization for buffer and broadcast
   SemaphoreHandle_t _mtx = nullptr;
@@ -153,7 +151,6 @@ private:
 
   // helpers for rendering
   String _formatTimestamp();
-  String _clip(const String& s);
   static int _tokenize(const String& in, String out[], int maxOut);
   static esp_log_level_t _detectEspLogLevel(const String& s); // maps E/W/I/D/V to ESP_LOG_* (unknown -> ESP_LOG_NONE)
   bool        _allowSyslog(const char * s) const;
@@ -166,4 +163,7 @@ private:
   uint32_t         _lastWsFlushMs = 0;
   bool             _wsDropPending = false;
   String           _wsDropMessage;
+
+  // Ring buffer overflow tracking
+  size_t           _backlogDropped = 0;
 };
