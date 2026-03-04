@@ -27,7 +27,7 @@
 
 ```ini
 lib_deps =
-  drakosha/AsyncWebConsole@^0.2.2
+  drakosha/AsyncWebConsole@^0.3.0
 ```
 
 ## Быстрый старт
@@ -73,8 +73,7 @@ void loop(){ }
 - `AsyncWebConsole(const char* wsPath = "/ws", size_t backlogBytes = 16*1024)`
 - `AsyncWebConsole(const char* wsPath, size_t backlogBytes, const Config& cfg)`
 - `void attachTo(AsyncWebServer& server, const char* routePath = "/")` — раздаёт HTML и регистрирует WS‑хендлер.
-- `void onCommand(CmdHandler h)` — обработчик одной строкой (`std::function<String(const String&)>`).
-- `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — реестр команд c аргументами.
+- `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — регистрация команды с разбором аргументов.
 - Логирование: `log(const String&)`, `print(const String&)`, `printf(const char* fmt, ...)`.
 - `void sendBacklog(AsyncWebSocketClient* client)` — отправка бэколога новому клиенту (автоматически при подключении).
 - Временные метки/обрезка: `setTimestamps(bool)`, `setMaxLineLen(size_t)`.
@@ -124,7 +123,7 @@ console.addCommand("echo", "<text>", "повторить текст",
     s += '\n'; return s;
   });
 ```
-Есть и упрощённый хук `onCommand(...)`, если не нужен парсер аргументов. Встроенная команда `help` формируется автоматически на основе реестра.
+Встроенная команда `help` формируется автоматически на основе реестра.
 
 ## HTML‑клиент
 - Отдаётся по `routePath`, указанному в `attachTo(...)` (например, `/console`).

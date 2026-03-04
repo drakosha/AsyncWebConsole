@@ -27,7 +27,7 @@ Async WebSocket console for ESP32 built on top of `ESPAsyncWebServer`. It safely
 
 ```ini
 lib_deps =
-  drakosha/AsyncWebConsole@^0.2.2
+  drakosha/AsyncWebConsole@^0.3.0
 ```
 
 ## Quick Start
@@ -73,8 +73,7 @@ void loop(){ }
 - `AsyncWebConsole(const char* wsPath = "/ws", size_t backlogBytes = 16*1024)`
 - `AsyncWebConsole(const char* wsPath, size_t backlogBytes, const Config& cfg)`
 - `void attachTo(AsyncWebServer& server, const char* routePath = "/")` — serves HTML and registers WS handler.
-- `void onCommand(CmdHandler h)` — single‑string handler (`std::function<String(const String&)>`).
-- `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — argv‑based command registry.
+- `bool addCommand(const char* name, const char* args, const char* help, CmdArgHandler fn)` — register a command with argv parsing.
 - Logging: `log(const String&)`, `print(const String&)`, `printf(const char* fmt, ...)`.
 - `void sendBacklog(AsyncWebSocketClient* client)` — sends backlog to a new client (called on connect).
 - Timestamps/clipping: `setTimestamps(bool)`, `setMaxLineLen(size_t)`.
@@ -124,7 +123,7 @@ console.addCommand("echo", "<text>", "repeat text",
     s += '\n'; return s;
   });
 ```
-You can also use the simpler `onCommand(...)` if you don’t need argv parsing. The built‑in `help` output is generated automatically from the registry.
+The built‑in `help` command is generated automatically from the registry.
 
 ## HTML Client
 - Served at `routePath` passed to `attachTo(...)` (e.g., `/console`).
