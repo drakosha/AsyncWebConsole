@@ -3,3 +3,5 @@
 cmake-build*/
 *.DS_Store
 *.log
+.claude
+

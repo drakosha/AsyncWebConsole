@@ -29,6 +29,10 @@ public:
     // Use ESP-IDF levels: ESP_LOG_NONE, _ERROR, _WARN, _INFO, _DEBUG, _VERBOSE
     esp_log_level_t syslogMaxLevel = ESP_LOG_VERBOSE;
 
+    // When true, IDF log bridge calls the original vprintf (UART output preserved).
+    // mirrorOut is skipped for IDF-originated messages to avoid duplication.
+    bool     idfPassthrough = true;
+
     // WebSocket batching
     size_t   wsBatchMaxBytes   = 1024;   // batch buffer size before trimming
     uint32_t wsFlushIntervalMs = 100;    // flush buffered messages at least every N ms
@@ -108,7 +112,7 @@ private:
                   uint8_t *data, size_t len);
                   
   // esp_log bridge
-  struct LogMsg { char * data; };
+  struct LogMsg { char * data; bool fromIdf; };
   static int  _idfVprintfShim(const char* fmt, va_list ap);
   static bool _inIsr();
   static vprintf_like_t _origVprintf;
@@ -156,8 +160,8 @@ private:
   bool        _allowSyslog(const char * s) const;
 
   // queue helpers
-  void _processLine(char * data);
-  bool _enqueueRaw(char * data);
+  void _processLine(char * data, bool fromIdf = false);
+  bool _enqueueRaw(char * data, bool fromIdf = false);
 
   String           _wsBatch;
   uint32_t         _lastWsFlushMs = 0;

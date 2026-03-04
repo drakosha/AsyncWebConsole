@@ -1,5 +1,9 @@
 # AsyncWebConsole Changelog
 
+## 0.3.1
+- **Feature:** Added `Config::idfPassthrough` (default `true`). When enabled, the IDF log bridge calls the original `vprintf` so UART output is preserved immediately (no drain-task delay). `mirrorOut` is automatically skipped for IDF-originated messages to avoid duplication.
+- Internal: added `fromIdf` flag to `LogMsg` to track message origin through the pipeline.
+
 ## 0.3.0
 - **Breaking:** Removed `onCommand(CmdHandler)` and `CmdHandler` typedef (was dead code, never wired into dispatch).
 - **Fix:** Memory leak in destructor — now properly frees ring buffer, queue, mutex, and remaining queued messages.

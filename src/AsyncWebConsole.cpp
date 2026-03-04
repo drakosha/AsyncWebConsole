@@ -198,12 +198,12 @@ void AsyncWebConsole::sendBacklog(AsyncWebSocketClient* c){
 }
 
 // Queue helpers
-bool AsyncWebConsole::_enqueueRaw(char* data){
+bool AsyncWebConsole::_enqueueRaw(char* data, bool fromIdf){
   if (!data || !_q) return false;
 
   bool result = true;
 
-  LogMsg msg{ data };
+  LogMsg msg{ data, fromIdf };
   if (_inIsr()) {
     BaseType_t hpw = pdFALSE;
     if (xQueueSendFromISR(_q, &msg, &hpw) != pdTRUE) { 
@@ -221,7 +221,7 @@ bool AsyncWebConsole::_enqueueRaw(char* data){
 }
 
 
-void AsyncWebConsole::_processLine(char* data){
+void AsyncWebConsole::_processLine(char* data, bool fromIdf){
   if (!data) return;
   size_t dataLength = strlen(data);
 
@@ -262,7 +262,7 @@ void AsyncWebConsole::_processLine(char* data){
   }
 
   _queueWsBroadcast(payload, payloadLen);
-  if (_cfg.mirrorOut) {
+  if (_cfg.mirrorOut && !(fromIdf && _cfg.idfPassthrough)) {
     _cfg.mirrorOut->print(payload);
   }
   if (_cfg.fileLogEnable) _appendToFile(payload, payloadLen);
@@ -502,24 +502,33 @@ void AsyncWebConsole::_onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *cli,
 }
 
 int AsyncWebConsole::_idfVprintfShim(const char* fmt, va_list ap){
+  // Passthrough: forward to original vprintf (preserves UART output)
+  int origLen = 0;
+  if (_sink && _sink->_cfg.idfPassthrough && _origVprintf) {
+    va_list ap2; va_copy(ap2, ap);
+    origLen = _origVprintf(fmt, ap2);
+    va_end(ap2);
+  }
+
   // Bridge not ready: return length only
   if (!_sink || !_sink->_q) {
+    if (origLen) return origLen;
     va_list ap2; va_copy(ap2, ap);
     int n = vsnprintf(nullptr, 0, fmt, ap2);
     va_end(ap2);
     return n > 0 ? n : 0;
   }
- 
-  // Normal path
+
+  // Normal path: enqueue for WebSocket / backlog / file
   char * s = _vsformat(fmt, _sink->_cfg.maxLineLen, ap);
-  if (!s) return 0;
+  if (!s) return origLen;
   int len = strlen(s);
   if (_sink->_allowSyslog(s)) {
-    if (!_sink->_enqueueRaw(s)) return 0;
+    if (!_sink->_enqueueRaw(s, true)) return origLen;
   } else {
     free(s);
   }
-  return len;
+  return origLen ? origLen : len;
 }
 
 void AsyncWebConsole::_startDrainTask(){
@@ -576,7 +585,7 @@ void AsyncWebConsole::_drainTask(void* arg){
           msg.data = extended;
         }
       }
-      self->_processLine(msg.data);
+      self->_processLine(msg.data, msg.fromIdf);
       free(msg.data);
     } else {
       self->_flushWsBroadcast(false);

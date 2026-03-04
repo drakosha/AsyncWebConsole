@@ -84,6 +84,7 @@ void loop(){ }
 - `void enableEtsPrintfBridge()` / `void disableEtsPrintfBridge()` / `void setEtsPrintfBridge(bool)` — `ets_printf` bridge.
 - IDF filters: `setGlobalLogLevel(esp_log_level_t)` and `setTagLogLevel(const char* tag, esp_log_level_t)`.
 - Console filter: `setSyslogMaxLevel(esp_log_level_t)` — limits which `esp_log` lines reach the console (based on E/W/I/D/V prefix).
+- IDF passthrough: when `Config::idfPassthrough` is `true` (default), the IDF log bridge calls the original `vprintf` so UART output is preserved immediately. `mirrorOut` is automatically skipped for IDF-originated messages to avoid duplication. Set to `false` to revert to the old behavior (UART only via `mirrorOut`, with drain-task delay).
 
 ### File Logging
 - Enable: `enableFileLog(const char* path = nullptr, size_t maxSize = 0, uint8_t maxFiles = 0)`
@@ -105,6 +106,7 @@ const AsyncWebConsole::Config cfg = []{
   c.maxFileSize    = 32 * 1024;    // rotate when exceeded
   c.maxFiles       = 3;            // .1 .. .N
   c.syslogMaxLevel = ESP_LOG_VERBOSE; // console allows up to this level
+  c.idfPassthrough    = true;      // call original vprintf (UART preserved); mirrorOut skipped for IDF logs
   c.wsBatchMaxBytes   = 1024;      // aggregate WS payload to reduce queue pressure
   c.wsFlushIntervalMs = 100;       // flush aggregated logs at least every 100 ms
   return c;

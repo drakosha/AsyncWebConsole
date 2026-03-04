@@ -84,6 +84,7 @@ void loop(){ }
 - `void enableEtsPrintfBridge()` / `void disableEtsPrintfBridge()` / `void setEtsPrintfBridge(bool)` — мост `ets_printf`.
 - Фильтры IDF: `setGlobalLogLevel(esp_log_level_t)` и `setTagLogLevel(const char* tag, esp_log_level_t)`.
 - Фильтр для консоли: `setSyslogMaxLevel(esp_log_level_t)` — ограничивает, какие строки `esp_log` попадают в консоль (по префиксу E/W/I/D/V).
+- Проброс IDF-логов: если `Config::idfPassthrough` равен `true` (по умолчанию), мост IDF-логов вызывает оригинальный `vprintf`, сохраняя UART-вывод без задержки. `mirrorOut` автоматически пропускается для IDF-сообщений, чтобы избежать дублирования. Установите `false` для старого поведения (UART только через `mirrorOut`, с задержкой drain-задачи).
 
 ### Файловый лог
 - Включение: `enableFileLog(const char* path = nullptr, size_t maxSize = 0, uint8_t maxFiles = 0)`
@@ -105,6 +106,7 @@ const AsyncWebConsole::Config cfg = []{
   c.maxFileSize    = 32 * 1024;    // ротация при превышении
   c.maxFiles       = 3;            // .1 .. .N
   c.syslogMaxLevel = ESP_LOG_VERBOSE; // максимум для попадания в консоль
+  c.idfPassthrough    = true;      // вызывать оригинальный vprintf (UART сохраняется); mirrorOut пропускается для IDF-логов
   c.wsBatchMaxBytes   = 1024;      // размер агрегируемого WS-пакета
   c.wsFlushIntervalMs = 100;       // flush каждые 100 мс
   return c;
