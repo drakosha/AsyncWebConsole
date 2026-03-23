@@ -140,7 +140,6 @@ void AsyncWebConsole::pushLineToBuffer(const char * s){
   size_t sl = strlen(s);
   if (sl >= _bufCap){
     // keep tail of the line only
-    _backlogDropped += _used + (sl - _bufCap);
     const char* src = s + (sl - _bufCap);
     memcpy(_logbuf, src, _bufCap);
     _head = 0; _used = _bufCap; return;
@@ -149,7 +148,6 @@ void AsyncWebConsole::pushLineToBuffer(const char * s){
   if (_used + sl > _bufCap){
     size_t need = (_used + sl) - _bufCap;
     if (need > _used) need = _used;
-    _backlogDropped += need;
     _head = (_head + need) % _bufCap;
     _used -= need;
   }
@@ -244,22 +242,9 @@ void AsyncWebConsole::_processLine(char* data, bool fromIdf){
     payloadLen = dataLength;
   }
 
-  size_t dropped = 0;
   if (_mtx) xSemaphoreTake(_mtx, portMAX_DELAY);
   pushLineToBuffer(payload);
-  if (_backlogDropped) {
-    dropped = _backlogDropped;
-    _backlogDropped = 0;
-  }
   if (_mtx) xSemaphoreGive(_mtx);
-
-  if (dropped) {
-    char note[80];
-    snprintf(note, sizeof(note),
-             "[AsyncWebConsole] backlog full, dropped %u bytes\n",
-             static_cast<unsigned>(dropped));
-    _queueWsBroadcast(note, strlen(note));
-  }
 
   _queueWsBroadcast(payload, payloadLen);
   if (_cfg.mirrorOut && !(fromIdf && _cfg.idfPassthrough)) {

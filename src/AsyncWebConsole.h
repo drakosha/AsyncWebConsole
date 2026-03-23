@@ -168,6 +168,4 @@ private:
   bool             _wsDropPending = false;
   String           _wsDropMessage;
 
-  // Ring buffer overflow tracking
-  size_t           _backlogDropped = 0;
 };
